@@ -1,0 +1,27 @@
+{
+  "name": "voxel-ecs",
+  "version": "0.1.0",
+  "description": "Robust sparse voxel octree game engine with ECS pattern using WebGPU and WebAssembly",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:wasm": "cd wasm && wasm-pack build --target web",
+    "preview": "vite preview",
+    "lint": "eslint src/**/*.ts"
+  },
+  "dependencies": {
+    "@webgpu/types": "^0.1.40",
+    "gl-matrix": "^3.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "vite-plugin-top-level-await": "^1.4.1",
+    "vite-plugin-wasm": "^3.3.0"
+  }
+}
