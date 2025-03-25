@@ -13,15 +13,32 @@ export class World implements IWorld {
   private components: Map<string, Map<Entity, Component>> = new Map();
   private systems: System[] = [];
   private logger: Logger;
+  private operationCount: number = 0;
+  private readonly LOG_BATCH_SIZE: number = 10;
+  private lastLogTime: number = 0;
+  private readonly LOG_INTERVAL: number = 1000; // Log summary every second
 
   constructor() {
     this.logger = new Logger("World");
   }
 
+  getSystems(): System[] {
+    return [...this.systems];
+  }
+
   createEntity(): Entity {
     const entity = this.nextEntityId++;
     this.entities.add(entity);
-    this.logger.debug(`Created entity ${entity}`);
+    this.operationCount++;
+
+    const currentTime = performance.now();
+    if (currentTime - this.lastLogTime >= this.LOG_INTERVAL) {
+      this.logger.debug(
+        `Entity operations in last second: ${this.operationCount}`
+      );
+      this.operationCount = 0;
+      this.lastLogTime = currentTime;
+    }
     return entity;
   }
 
@@ -30,7 +47,7 @@ export class World implements IWorld {
     for (const components of this.components.values()) {
       components.delete(entity);
     }
-    this.logger.debug(`Destroyed entity ${entity}`);
+    this.operationCount++;
   }
 
   addComponent<T extends Component>(entity: Entity, component: T): void {
@@ -39,7 +56,7 @@ export class World implements IWorld {
       this.components.set(componentName, new Map());
     }
     this.components.get(componentName)!.set(entity, component);
-    this.logger.debug(`Added component ${componentName} to entity ${entity}`);
+    this.operationCount++;
   }
 
   getComponent<T extends Component>(
@@ -56,9 +73,7 @@ export class World implements IWorld {
   ): void {
     const componentName = new componentType().type;
     this.components.get(componentName)?.delete(entity);
-    this.logger.debug(
-      `Removed component ${componentName} from entity ${entity}`
-    );
+    this.operationCount++;
   }
 
   getEntitiesWith(...componentTypes: ComponentType<Component>[]): Entity[] {
@@ -78,7 +93,7 @@ export class World implements IWorld {
 
   addSystem(system: System): void {
     this.systems.push(system);
-    this.logger.debug(`Added system ${system.constructor.name}`);
+    this.logger.info(`Added system ${system.constructor.name}`); // Keep this as INFO level since it's infrequent
   }
 
   update(deltaTime: number): void {

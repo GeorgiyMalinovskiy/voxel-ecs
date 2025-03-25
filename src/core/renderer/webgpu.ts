@@ -10,9 +10,27 @@ export class WebGPURenderer {
   private uniformBuffer: GPUBuffer | null = null;
   private bindGroup: GPUBindGroup | null = null;
   private logger: Logger;
+  private lastRenderLogTime: number = 0;
+  private readonly RENDER_LOG_INTERVAL: number = 1000; // Log every 1 second
+  private frameCount: number = 0;
+  private lastFrameTime: number = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.logger = new Logger("WebGPURenderer");
+  }
+
+  getStatus(): string {
+    const fps =
+      this.frameCount > 0
+        ? Math.round(
+            (1000 * this.frameCount) / (performance.now() - this.lastFrameTime)
+          )
+        : 0;
+
+    return (
+      `FPS: ${fps}, Canvas: ${this.canvas.width}x${this.canvas.height}, ` +
+      `Buffers: ${this.vertexBuffer ? "Active" : "None"}`
+    );
   }
 
   async initialize(): Promise<void> {
@@ -171,7 +189,7 @@ export class WebGPURenderer {
     new Float32Array(this.vertexBuffer.getMappedRange()).set(vertices);
     this.vertexBuffer.unmap();
 
-    this.logger.debug(
+    this.logger.info(
       `Updated vertex buffer with ${vertices.length / 7} vertices`
     );
   }
@@ -229,6 +247,12 @@ export class WebGPURenderer {
       return;
     }
 
+    // Update frame statistics
+    this.frameCount++;
+    if (this.lastFrameTime === 0) {
+      this.lastFrameTime = performance.now();
+    }
+
     const commandEncoder = this.device.createCommandEncoder();
     const textureView = this.context.getCurrentTexture().createView();
 
@@ -276,6 +300,30 @@ export class WebGPURenderer {
     passEncoder.end();
 
     this.device.queue.submit([commandEncoder.finish()]);
-    this.logger.debug("Rendered frame");
+    depthTexture.destroy();
+
+    // Only log render frame every RENDER_LOG_INTERVAL milliseconds
+    const currentTime = performance.now();
+    if (currentTime - this.lastRenderLogTime >= this.RENDER_LOG_INTERVAL) {
+      this.logger.debug("Frame statistics: WebGPU render completed");
+      this.lastRenderLogTime = currentTime;
+    }
+  }
+
+  dispose(): void {
+    if (this.vertexBuffer) {
+      this.vertexBuffer.destroy();
+      this.vertexBuffer = null;
+    }
+    if (this.uniformBuffer) {
+      this.uniformBuffer.destroy();
+      this.uniformBuffer = null;
+    }
+    // Clear other WebGPU resources
+    this.pipeline = null;
+    this.bindGroup = null;
+    this.context = null;
+    this.device = null;
+    this.logger.warn("WebGPU renderer disposed - all resources cleaned up");
   }
 }

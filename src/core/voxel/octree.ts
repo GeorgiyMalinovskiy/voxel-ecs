@@ -21,35 +21,51 @@ export class OctreeNode {
     this.logger = new Logger(`OctreeNode-${depth}`);
   }
 
-  setVoxel(position: vec3, voxel: Voxel): void {
-    if (this.depth === this.maxDepth) {
-      this.voxel = voxel;
-      this.logger.debug(`Set voxel at position ${vec3.str(position)}`);
-      return;
-    }
-
-    const childIndex = this.getChildIndex(position);
-    if (!this.children) {
-      this.subdivide();
-    }
-
-    const child = this.children![childIndex];
-    if (child) {
-      child.setVoxel(position, voxel);
-    }
-  }
-
   getVoxel(position: vec3): Voxel | null {
-    if (this.depth === this.maxDepth) {
-      return this.voxel;
-    }
-
-    const childIndex = this.getChildIndex(position);
-    if (!this.children || !this.children[childIndex]) {
+    // Check if position is within this node's bounds
+    if (!this.containsPoint(position)) {
       return null;
     }
 
-    return this.children[childIndex]!.getVoxel(position);
+    // If this is a leaf node or we have a voxel, return the voxel
+    if (this.depth === this.maxDepth || this.voxel !== null) {
+      return this.voxel;
+    }
+
+    // If we have children, delegate to the appropriate child
+    if (this.children) {
+      const childIndex = this.getChildIndexForPosition(position);
+      return this.children[childIndex]?.getVoxel(position) ?? null;
+    }
+
+    return null;
+  }
+
+  setVoxel(position: vec3, voxel: Voxel | null): void {
+    // Check if position is within this node's bounds
+    if (!this.containsPoint(position)) {
+      return;
+    }
+
+    // If this is a leaf node, set the voxel directly
+    if (this.depth === this.maxDepth) {
+      this.voxel = voxel;
+      return;
+    }
+
+    // If we don't have children and we're setting a voxel, subdivide
+    if (!this.children && voxel !== null) {
+      this.subdivide();
+    }
+
+    // If we have children, delegate to the appropriate child
+    if (this.children) {
+      const childIndex = this.getChildIndexForPosition(position);
+      this.children[childIndex]?.setVoxel(position, voxel);
+    } else {
+      // If we're clearing a voxel (voxel === null) and have no children, just set it
+      this.voxel = voxel;
+    }
   }
 
   private subdivide(): void {
@@ -83,6 +99,29 @@ export class OctreeNode {
     return index;
   }
 
+  private getChildIndexForPosition(position: vec3): number {
+    const halfSize = this.size / 2;
+    let index = 0;
+
+    if (position[0] >= this.position[0] + halfSize) index |= 1;
+    if (position[1] >= this.position[1] + halfSize) index |= 2;
+    if (position[2] >= this.position[2] + halfSize) index |= 4;
+
+    return index;
+  }
+
+  private containsPoint(position: vec3): boolean {
+    const halfSize = this.size / 2;
+    return (
+      position[0] >= this.position[0] &&
+      position[0] < this.position[0] + this.size &&
+      position[1] >= this.position[1] &&
+      position[1] < this.position[1] + this.size &&
+      position[2] >= this.position[2] &&
+      position[2] < this.position[2] + this.size
+    );
+  }
+
   traverse(callback: (node: OctreeNode) => void): void {
     callback(this);
     if (this.children) {
@@ -107,8 +146,17 @@ export class VoxelOctree {
     );
   }
 
-  setVoxel(position: vec3, voxel: Voxel): void {
+  getSize(): number {
+    return this.root.size;
+  }
+
+  getMaxDepth(): number {
+    return this.root.maxDepth;
+  }
+
+  setVoxel(position: vec3, voxel: Voxel | null): void {
     this.root.setVoxel(position, voxel);
+    this.logger.debug(`Set voxel at position ${vec3.str(position)}`);
   }
 
   getVoxel(position: vec3): Voxel | null {
@@ -117,5 +165,13 @@ export class VoxelOctree {
 
   traverse(callback: (node: OctreeNode) => void): void {
     this.root.traverse(callback);
+  }
+
+  clear(): void {
+    // Create a new root node with the same parameters
+    const size = this.root.size;
+    const maxDepth = this.root.maxDepth;
+    this.root = new OctreeNode(vec3.fromValues(0, 0, 0), size, 0, maxDepth);
+    this.logger.info("Octree cleared");
   }
 }

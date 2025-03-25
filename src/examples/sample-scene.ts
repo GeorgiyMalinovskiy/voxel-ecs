@@ -10,6 +10,8 @@ import { Logger, LogLevel } from "../core/utils/logger";
 // Systems
 class CameraSystem implements System {
   private logger: Logger;
+  private lastLogTime: number = 0;
+  private readonly LOG_INTERVAL: number = 1000; // Log every 1 second
 
   constructor() {
     this.logger = new Logger("CameraSystem");
@@ -17,10 +19,15 @@ class CameraSystem implements System {
 
   update(world: World, deltaTime: number): void {
     const entities = world.getEntitiesWith(TransformComponent, CameraComponent);
+    const currentTime = performance.now();
 
-    for (const entity of entities) {
-      const transform = world.getComponent(entity, TransformComponent)!;
-      this.logger.debug(`Camera position: ${vec3.str(transform.position)}`);
+    // Only log camera position every LOG_INTERVAL milliseconds
+    if (currentTime - this.lastLogTime >= this.LOG_INTERVAL) {
+      for (const entity of entities) {
+        const transform = world.getComponent(entity, TransformComponent)!;
+        this.logger.debug(`Camera position: ${vec3.str(transform.position)}`);
+      }
+      this.lastLogTime = currentTime;
     }
   }
 }
@@ -31,11 +38,16 @@ export class SampleScene {
   private renderer: WebGPURenderer;
   private logger: Logger;
   private lastTime: number = 0;
+  private lastSnapshotTime: number = 0;
+  private readonly SNAPSHOT_INTERVAL: number = 1000; // Take snapshot every second
   private cleanup: () => void;
+  private isDisposed: boolean = false;
+  private boundKeydownHandler: (event: KeyboardEvent) => void;
+  private animationFrameId: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
-    // Set log level to include debug messages
-    Logger.setLogLevel(LogLevel.DEBUG);
+    // Set log level to INFO by default, only show debug when needed
+    Logger.setLogLevel(LogLevel.INFO);
 
     this.world = new World();
     this.octree = new VoxelOctree(32, 5); // 32 units size, 5 levels deep
@@ -59,17 +71,20 @@ export class SampleScene {
     // Create sample voxel data
     this.createSampleVoxels();
 
-    // Setup logging on 'L' key press
-    document.addEventListener("keydown", (event) => {
+    // Setup logging on 'L' key press with proper binding for removal
+    this.boundKeydownHandler = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "l") {
+        this.logger.info("\n=== Final Scene State ===");
+        this.captureSnapshot();
+        this.logger.info("=== End Scene State ===\n");
         this.downloadLogs();
       }
-    });
+    };
+    document.addEventListener("keydown", this.boundKeydownHandler);
 
     // Setup cleanup
     this.cleanup = () => {
-      Logger.cleanup();
-      this.logger.info("Scene cleanup completed");
+      this.dispose();
     };
 
     window.addEventListener("beforeunload", this.cleanup);
@@ -108,6 +123,43 @@ export class SampleScene {
     this.logger.info("Logs downloaded");
   }
 
+  private captureSnapshot(): void {
+    // Log scene summary
+    this.logger.info(`Active entities: ${this.world.getEntitiesWith().length}`);
+
+    // Log camera state
+    const cameraEntity = this.world.getEntitiesWith(
+      TransformComponent,
+      CameraComponent
+    )[0];
+    if (cameraEntity) {
+      const cameraTransform = this.world.getComponent(
+        cameraEntity,
+        TransformComponent
+      )!;
+      const camera = this.world.getComponent(cameraEntity, CameraComponent)!;
+      this.logger.info(
+        `Camera position: ${vec3.str(cameraTransform.position)}`
+      );
+      this.logger.info(`Camera FOV: ${camera.fov}°`);
+    }
+
+    // Log renderer state
+    this.logger.info(`Renderer status: ${this.renderer.getStatus()}`);
+
+    // Log octree state
+    this.logger.info(
+      `Octree size: ${this.octree.getSize()}, depth: ${this.octree.getMaxDepth()}`
+    );
+
+    // Log system state
+    const systems = this.world.getSystems();
+    this.logger.info(`Active systems: ${systems.length}`);
+    systems.forEach((system: System) => {
+      this.logger.info(`- ${system.constructor.name}`);
+    });
+  }
+
   async initialize(): Promise<void> {
     await this.renderer.initialize();
     this.renderer.updateVoxelData(this.octree);
@@ -120,6 +172,14 @@ export class SampleScene {
 
     // Update world systems
     this.world.update(deltaTime);
+
+    // Take periodic snapshots
+    if (currentTime - this.lastSnapshotTime >= this.SNAPSHOT_INTERVAL) {
+      this.logger.info("\n=== Scene State Snapshot ===");
+      this.captureSnapshot();
+      this.logger.info(`=== End Snapshot at ${new Date().toISOString()} ===\n`);
+      this.lastSnapshotTime = currentTime;
+    }
 
     // Get camera data for rendering
     const cameraEntity = this.world.getEntitiesWith(
@@ -158,17 +218,55 @@ export class SampleScene {
   }
 
   start(): void {
+    if (this.isDisposed) {
+      this.logger.warn("Attempting to start a disposed scene");
+      return;
+    }
+
     const animate = (time: number) => {
+      if (this.isDisposed) {
+        return;
+      }
       this.update(time);
-      requestAnimationFrame(animate);
+      this.animationFrameId = requestAnimationFrame(animate);
     };
 
-    requestAnimationFrame(animate);
+    this.animationFrameId = requestAnimationFrame(animate);
     this.logger.info("Scene animation started");
   }
 
   dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+    this.isDisposed = true;
+
+    // Cancel animation frame
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Remove event listeners
     window.removeEventListener("beforeunload", this.cleanup);
-    this.cleanup();
+    document.removeEventListener("keydown", this.boundKeydownHandler);
+
+    // Cleanup WebGPU resources
+    if (this.renderer) {
+      this.renderer.dispose();
+    }
+
+    // Clear world entities
+    const entities = this.world.getEntitiesWith();
+    for (const entity of entities) {
+      this.world.destroyEntity(entity);
+    }
+
+    // Clear octree
+    this.octree.clear();
+
+    // Cleanup logger
+    Logger.cleanup();
+    this.logger.info("Scene cleanup completed");
   }
 }
