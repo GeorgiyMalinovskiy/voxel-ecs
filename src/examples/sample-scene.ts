@@ -12,23 +12,180 @@ class CameraSystem implements System {
   private logger: Logger;
   private lastLogTime: number = 0;
   private readonly LOG_INTERVAL: number = 1000; // Log every 1 second
+  private keyStates: Map<string, boolean> = new Map();
+  private boundKeydownHandler: (event: KeyboardEvent) => void;
+  private boundKeyupHandler: (event: KeyboardEvent) => void;
+  private boundMouseMoveHandler: (event: MouseEvent) => void;
+  private boundPointerLockChange: () => void;
+  private world: World | null = null;
 
   constructor() {
     this.logger = new Logger("CameraSystem");
+
+    // Bind event handlers
+    this.boundKeydownHandler = this.handleKeyDown.bind(this);
+    this.boundKeyupHandler = this.handleKeyUp.bind(this);
+    this.boundMouseMoveHandler = this.handleMouseMove.bind(this);
+    this.boundPointerLockChange = this.handlePointerLockChange.bind(this);
+
+    // Add event listeners
+    document.addEventListener("keydown", this.boundKeydownHandler);
+    document.addEventListener("keyup", this.boundKeyupHandler);
+    document.addEventListener("mousemove", this.boundMouseMoveHandler);
+    document.addEventListener("pointerlockchange", this.boundPointerLockChange);
+
+    // Initialize key states for WASD and arrow keys
+    [
+      "w",
+      "a",
+      "s",
+      "d",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+    ].forEach((key) => {
+      this.keyStates.set(key, false);
+    });
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    const key = event.key.toLowerCase();
+    this.keyStates.set(key, true);
+
+    // Toggle mouse lock on 'C' key
+    if (key === "c") {
+      this.toggleMouseLock();
+    }
+  }
+
+  private handleKeyUp(event: KeyboardEvent): void {
+    const key = event.key.toLowerCase();
+    this.keyStates.set(key, false);
+  }
+
+  private handleMouseMove(event: MouseEvent): void {
+    const entities =
+      this.world?.getEntitiesWith(TransformComponent, CameraComponent) ?? [];
+    for (const entity of entities) {
+      const camera = this.world!.getComponent(entity, CameraComponent)!;
+      const transform = this.world!.getComponent(entity, TransformComponent)!;
+
+      if (camera.isMouseLocked) {
+        // Update camera rotation based on mouse movement
+        const rotX = -event.movementY * camera.mouseSensitivity; // Inverted Y axis
+        const rotY = event.movementX * camera.mouseSensitivity;
+
+        vec3.add(
+          camera.targetRotation,
+          camera.targetRotation,
+          vec3.fromValues(rotX, rotY, 0)
+        );
+
+        // Clamp vertical rotation to prevent camera flipping
+        camera.targetRotation[0] = Math.max(
+          -Math.PI / 2,
+          Math.min(Math.PI / 2, camera.targetRotation[0])
+        );
+      }
+    }
+  }
+
+  private handlePointerLockChange(): void {
+    const entities =
+      this.world?.getEntitiesWith(TransformComponent, CameraComponent) ?? [];
+    for (const entity of entities) {
+      const camera = this.world!.getComponent(entity, CameraComponent)!;
+      camera.isMouseLocked = document.pointerLockElement !== null;
+    }
+  }
+
+  private toggleMouseLock(): void {
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    } else {
+      document.body.requestPointerLock();
+    }
   }
 
   update(world: World, deltaTime: number): void {
+    this.world = world;
     const entities = world.getEntitiesWith(TransformComponent, CameraComponent);
     const currentTime = performance.now();
 
-    // Only log camera position every LOG_INTERVAL milliseconds
-    if (currentTime - this.lastLogTime >= this.LOG_INTERVAL) {
-      for (const entity of entities) {
-        const transform = world.getComponent(entity, TransformComponent)!;
-        this.logger.debug(`Camera position: ${vec3.str(transform.position)}`);
+    for (const entity of entities) {
+      const transform = world.getComponent(entity, TransformComponent)!;
+      const camera = world.getComponent(entity, CameraComponent)!;
+
+      // Update rotation with smoothing
+      vec3.lerp(
+        transform.rotation,
+        transform.rotation,
+        camera.targetRotation,
+        camera.smoothing
+      );
+
+      // Calculate movement direction based on camera rotation
+      const moveDir = vec3.create();
+      const forward = vec3.fromValues(
+        Math.sin(transform.rotation[1]),
+        0, // Keep Y movement at 0 for now
+        Math.cos(transform.rotation[1])
+      );
+      const right = vec3.fromValues(
+        Math.cos(transform.rotation[1]),
+        0,
+        -Math.sin(transform.rotation[1])
+      );
+
+      // Apply movement based on key states
+      if (this.keyStates.get("w") || this.keyStates.get("arrowup")) {
+        vec3.scaleAndAdd(moveDir, moveDir, forward, 1);
       }
-      this.lastLogTime = currentTime;
+      if (this.keyStates.get("s") || this.keyStates.get("arrowdown")) {
+        vec3.scaleAndAdd(moveDir, moveDir, forward, -1);
+      }
+      if (this.keyStates.get("d") || this.keyStates.get("arrowright")) {
+        vec3.scaleAndAdd(moveDir, moveDir, right, 1);
+      }
+      if (this.keyStates.get("a") || this.keyStates.get("arrowleft")) {
+        vec3.scaleAndAdd(moveDir, moveDir, right, -1);
+      }
+
+      // Normalize and scale movement
+      if (vec3.length(moveDir) > 0) {
+        vec3.normalize(moveDir, moveDir);
+        vec3.scale(moveDir, moveDir, camera.moveSpeed * deltaTime);
+        vec3.add(camera.targetPosition, transform.position, moveDir);
+      } else {
+        vec3.copy(camera.targetPosition, transform.position);
+      }
+
+      // Update position with smoothing
+      vec3.lerp(
+        transform.position,
+        transform.position,
+        camera.targetPosition,
+        camera.smoothing
+      );
+
+      // Log camera position periodically
+      if (currentTime - this.lastLogTime >= this.LOG_INTERVAL) {
+        this.logger.debug(`Camera position: ${vec3.str(transform.position)}`);
+        this.lastLogTime = currentTime;
+      }
     }
+  }
+
+  dispose(): void {
+    // Remove event listeners
+    document.removeEventListener("keydown", this.boundKeydownHandler);
+    document.removeEventListener("keyup", this.boundKeyupHandler);
+    document.removeEventListener("mousemove", this.boundMouseMoveHandler);
+    document.removeEventListener(
+      "pointerlockchange",
+      this.boundPointerLockChange
+    );
   }
 }
 
@@ -42,8 +199,8 @@ export class SampleScene {
   private readonly SNAPSHOT_INTERVAL: number = 1000; // Take snapshot every second
   private cleanup: () => void;
   private isDisposed: boolean = false;
-  private boundKeydownHandler: (event: KeyboardEvent) => void;
   private animationFrameId: number | null = null;
+  private boundKeydownHandler: (event: KeyboardEvent) => void;
 
   constructor(canvas: HTMLCanvasElement) {
     // Set log level to INFO by default, only show debug when needed
@@ -56,14 +213,24 @@ export class SampleScene {
 
     // Initialize camera
     const cameraEntity = this.world.createEntity();
+    const initialPosition = vec3.fromValues(0, 8, 20); // Higher and further back
+    const initialRotation = vec3.fromValues(-0.3, 0, 0); // Slight downward tilt
+
     this.world.addComponent(
       cameraEntity,
-      new TransformComponent(
-        vec3.fromValues(0, 5, 10), // position
-        vec3.fromValues(0, 0, 0) // rotation
+      new TransformComponent(initialPosition, initialRotation)
+    );
+    this.world.addComponent(
+      cameraEntity,
+      new CameraComponent(
+        60, // Wider FOV
+        0.1,
+        200.0, // Increased far plane
+        0.15,
+        initialPosition,
+        initialRotation
       )
     );
-    this.world.addComponent(cameraEntity, new CameraComponent(45, 0.1, 100.0));
 
     // Add systems
     this.world.addSystem(new CameraSystem());
@@ -92,13 +259,13 @@ export class SampleScene {
 
   private createSampleVoxels(): void {
     // Create a simple terrain with different colors
-    for (let x = -8; x < 8; x++) {
-      for (let z = -8; z < 8; z++) {
+    for (let x = -16; x < 16; x++) {
+      for (let z = -16; z < 16; z++) {
         const height = Math.floor(
-          Math.sin(x * 0.5) * 2 + Math.cos(z * 0.5) * 2
+          Math.sin(x * 0.3) * 4 + Math.cos(z * 0.3) * 4 + 4 // Increased amplitude and added offset
         );
 
-        for (let y = -4; y <= height; y++) {
+        for (let y = -2; y <= height; y++) {
           const color: [number, number, number, number] = [
             0.2 + Math.random() * 0.2,
             0.5 + Math.random() * 0.2,
@@ -124,10 +291,14 @@ export class SampleScene {
   }
 
   private captureSnapshot(): void {
-    // Log scene summary
-    this.logger.info(`Active entities: ${this.world.getEntitiesWith().length}`);
+    // Log scene summary with clear section headers
+    this.logger.info("=== Scene Summary ===");
+    this.logger.info(
+      `Total Active Entities: ${this.world.getEntitiesWith().length}`
+    );
 
     // Log camera state
+    this.logger.info("\n=== Camera State ===");
     const cameraEntity = this.world.getEntitiesWith(
       TransformComponent,
       CameraComponent
@@ -138,23 +309,27 @@ export class SampleScene {
         TransformComponent
       )!;
       const camera = this.world.getComponent(cameraEntity, CameraComponent)!;
-      this.logger.info(
-        `Camera position: ${vec3.str(cameraTransform.position)}`
-      );
-      this.logger.info(`Camera FOV: ${camera.fov}°`);
+      this.logger.info(`Position: ${vec3.str(cameraTransform.position)}`);
+      this.logger.info(`Rotation: ${vec3.str(cameraTransform.rotation)}`);
+      this.logger.info(`FOV: ${camera.fov}°`);
+      this.logger.info(`Near/Far: ${camera.near}/${camera.far}`);
+      this.logger.info(`Mouse Locked: ${camera.isMouseLocked}`);
     }
 
     // Log renderer state
-    this.logger.info(`Renderer status: ${this.renderer.getStatus()}`);
+    this.logger.info("\n=== Renderer State ===");
+    this.logger.info(`Status: ${this.renderer.getStatus()}`);
 
     // Log octree state
+    this.logger.info("\n=== Octree State ===");
     this.logger.info(
-      `Octree size: ${this.octree.getSize()}, depth: ${this.octree.getMaxDepth()}`
+      `Size: ${this.octree.getSize()}, Max Depth: ${this.octree.getMaxDepth()}`
     );
 
     // Log system state
+    this.logger.info("\n=== Active Systems ===");
     const systems = this.world.getSystems();
-    this.logger.info(`Active systems: ${systems.length}`);
+    this.logger.info(`Count: ${systems.length}`);
     systems.forEach((system: System) => {
       this.logger.info(`- ${system.constructor.name}`);
     });
@@ -177,7 +352,9 @@ export class SampleScene {
     if (currentTime - this.lastSnapshotTime >= this.SNAPSHOT_INTERVAL) {
       this.logger.info("\n=== Scene State Snapshot ===");
       this.captureSnapshot();
-      this.logger.info(`=== End Snapshot at ${new Date().toISOString()} ===\n`);
+      this.logger.info(
+        "=== End Snapshot at " + new Date().toISOString() + " ===\n"
+      );
       this.lastSnapshotTime = currentTime;
     }
 
@@ -194,10 +371,20 @@ export class SampleScene {
 
     // Create view matrix
     const viewMatrix = mat4.create();
+    const forward = vec3.fromValues(
+      Math.sin(cameraTransform.rotation[1]) *
+        Math.cos(cameraTransform.rotation[0]),
+      -Math.sin(cameraTransform.rotation[0]),
+      Math.cos(cameraTransform.rotation[1]) *
+        Math.cos(cameraTransform.rotation[0])
+    );
+    const lookAtPoint = vec3.create();
+    vec3.add(lookAtPoint, cameraTransform.position, forward);
+
     mat4.lookAt(
       viewMatrix,
       cameraTransform.position,
-      vec3.fromValues(0, 0, 0), // Look at center
+      lookAtPoint,
       vec3.fromValues(0, 1, 0) // Up vector
     );
 
