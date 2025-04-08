@@ -32,8 +32,8 @@ export class SampleScene {
 
     // Initialize camera
     const cameraEntity = this.world.createEntity();
-    const initialPosition = vec3.fromValues(0, 8, 20); // Higher and further back
-    const initialRotation = vec3.fromValues(-0.3, 0, 0); // Slight downward tilt
+    const initialPosition = vec3.fromValues(15, 15, -25); // Higher and further back
+    const initialRotation = vec3.fromValues(0, 0, 0); // Slight downward tilt
 
     this.world.addComponent(
       cameraEntity,
@@ -44,10 +44,9 @@ export class SampleScene {
       new CameraComponent(
         60, // Wider FOV
         0.1,
-        200.0, // Increased far plane
+        100, // Increased far plane
         0.15,
-        initialPosition,
-        initialRotation
+        initialPosition
       )
     );
 
