@@ -3,15 +3,14 @@ import { System } from "../core/ecs/types";
 import { TransformComponent } from "../core/ecs/components/transform";
 import { CameraComponent } from "../core/ecs/components/camera";
 import { VoxelOctree } from "../core/voxel/octree";
-import { WebGPURenderer } from "../core/renderer/webgpu";
-import { vec3, mat4 } from "gl-matrix";
+import { vec3 } from "gl-matrix";
 import { Logger, LogLevel } from "../core/utils/logger";
 import { CameraSystem } from "../core/ecs/systems/camera";
+import { RenderSystem } from "../core/ecs/systems/render";
 
 export class SampleScene {
   private world: World;
   private octree: VoxelOctree;
-  private renderer: WebGPURenderer;
   private logger: Logger;
   private lastTime: number = 0;
   private lastSnapshotTime: number = 0;
@@ -21,6 +20,7 @@ export class SampleScene {
   private animationFrameId: number | null = null;
   private boundKeydownHandler: (event: KeyboardEvent) => void;
   private cameraSystem: CameraSystem;
+  private renderSystem: RenderSystem;
 
   constructor(canvas: HTMLCanvasElement) {
     // Set log level to INFO by default, only show debug when needed
@@ -28,7 +28,6 @@ export class SampleScene {
 
     this.world = new World();
     this.octree = new VoxelOctree(32, 5); // 32 units size, 5 levels deep
-    this.renderer = new WebGPURenderer(canvas);
     this.logger = new Logger("SampleScene");
 
     // Initialize camera
@@ -56,6 +55,9 @@ export class SampleScene {
     this.cameraSystem = new CameraSystem();
     this.cameraSystem.initialize(canvas);
     this.world.addSystem(this.cameraSystem);
+
+    this.renderSystem = new RenderSystem(canvas, this.octree);
+    this.world.addSystem(this.renderSystem);
 
     // Create sample voxel data
     this.createSampleVoxels();
@@ -140,7 +142,7 @@ export class SampleScene {
 
     // Log renderer state
     this.logger.info("\n=== Renderer State ===");
-    this.logger.info(`Status: ${this.renderer.getStatus()}`);
+    this.logger.info(`Status: ${this.renderSystem.getStatus()}`);
 
     // Log octree state
     this.logger.info("\n=== Octree State ===");
@@ -158,8 +160,7 @@ export class SampleScene {
   }
 
   async initialize(): Promise<void> {
-    await this.renderer.initialize();
-    this.renderer.updateVoxelData(this.octree);
+    await this.renderSystem.initialize();
     this.logger.info("Scene initialized");
   }
 
@@ -179,59 +180,6 @@ export class SampleScene {
       );
       this.lastSnapshotTime = currentTime;
     }
-
-    // Get camera data for rendering
-    const cameraEntity = this.world.getEntitiesWith(
-      TransformComponent,
-      CameraComponent
-    )[0];
-    const cameraTransform = this.world.getComponent(
-      cameraEntity,
-      TransformComponent
-    )!;
-    const camera = this.world.getComponent(cameraEntity, CameraComponent)!;
-
-    // Update position with smoothing
-    vec3.lerp(
-      cameraTransform.position,
-      cameraTransform.position,
-      camera.targetPosition,
-      camera.smoothing
-    );
-
-    // Create view matrix
-    const viewMatrix = mat4.create();
-    const forward = vec3.fromValues(
-      Math.sin(cameraTransform.rotation[1]) *
-        Math.cos(cameraTransform.rotation[0]),
-      -Math.sin(cameraTransform.rotation[0]),
-      Math.cos(cameraTransform.rotation[1]) *
-        Math.cos(cameraTransform.rotation[0])
-    );
-    const lookAtPoint = vec3.create();
-    vec3.add(lookAtPoint, cameraTransform.position, forward);
-
-    mat4.lookAt(
-      viewMatrix,
-      cameraTransform.position,
-      lookAtPoint,
-      vec3.fromValues(0, 1, 0) // Up vector
-    );
-
-    // Create projection matrix
-    const projectionMatrix = mat4.create();
-    const aspect =
-      this.renderer["canvas"].width / this.renderer["canvas"].height;
-    mat4.perspective(
-      projectionMatrix,
-      camera.fov * (Math.PI / 180),
-      aspect,
-      camera.near,
-      camera.far
-    );
-
-    // Render the scene
-    this.renderer.render(viewMatrix, projectionMatrix);
   }
 
   start(): void {
@@ -267,11 +215,6 @@ export class SampleScene {
     // Remove event listeners
     window.removeEventListener("beforeunload", this.cleanup);
     document.removeEventListener("keydown", this.boundKeydownHandler);
-
-    // Cleanup WebGPU resources
-    if (this.renderer) {
-      this.renderer.dispose();
-    }
 
     // Clear world entities
     const entities = this.world.getEntitiesWith();
