@@ -71,22 +71,17 @@ class CameraSystem implements System {
       const camera = this.world!.getComponent(entity, CameraComponent)!;
       const transform = this.world!.getComponent(entity, TransformComponent)!;
 
+      // Handle mouse movement for camera rotation
       if (camera.isMouseLocked) {
-        // Update camera rotation based on mouse movement
-        const rotX = -event.movementY * camera.mouseSensitivity; // Inverted Y axis
-        const rotY = event.movementX * camera.mouseSensitivity;
+        const rotX = -event.movementY * camera.mouseSensitivity;
+        const rotY = -event.movementX * camera.mouseSensitivity;
 
-        vec3.add(
-          camera.targetRotation,
-          camera.targetRotation,
-          vec3.fromValues(rotX, rotY, 0)
-        );
-
-        // Clamp vertical rotation to prevent camera flipping
-        camera.targetRotation[0] = Math.max(
+        // Update rotation with clamping for X (vertical) rotation
+        transform.rotation[0] = Math.max(
           -Math.PI / 2,
-          Math.min(Math.PI / 2, camera.targetRotation[0])
+          Math.min(Math.PI / 2, transform.rotation[0] + rotX)
         );
+        transform.rotation[1] = (transform.rotation[1] + rotY) % (2 * Math.PI);
       }
     }
   }
@@ -117,25 +112,17 @@ class CameraSystem implements System {
       const transform = world.getComponent(entity, TransformComponent)!;
       const camera = world.getComponent(entity, CameraComponent)!;
 
-      // Update rotation with smoothing
-      vec3.lerp(
-        transform.rotation,
-        transform.rotation,
-        camera.targetRotation,
-        camera.smoothing
-      );
-
       // Calculate movement direction based on camera rotation
       const moveDir = vec3.create();
       const forward = vec3.fromValues(
-        Math.sin(transform.rotation[1]),
+        -Math.sin(transform.rotation[1]), // Negated for correct direction
         0, // Keep Y movement at 0 for now
-        Math.cos(transform.rotation[1])
+        -Math.cos(transform.rotation[1]) // Negated for correct direction
       );
       const right = vec3.fromValues(
-        Math.cos(transform.rotation[1]),
+        -Math.cos(transform.rotation[1]), // Negated for correct direction
         0,
-        -Math.sin(transform.rotation[1])
+        Math.sin(transform.rotation[1])
       );
 
       // Apply movement based on key states
@@ -368,6 +355,14 @@ export class SampleScene {
       TransformComponent
     )!;
     const camera = this.world.getComponent(cameraEntity, CameraComponent)!;
+
+    // Update position with smoothing
+    vec3.lerp(
+      cameraTransform.position,
+      cameraTransform.position,
+      camera.targetPosition,
+      camera.smoothing
+    );
 
     // Create view matrix
     const viewMatrix = mat4.create();

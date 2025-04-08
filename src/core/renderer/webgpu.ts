@@ -296,7 +296,8 @@ export class WebGPURenderer {
     passEncoder.setPipeline(this.pipeline);
     passEncoder.setBindGroup(0, this.bindGroup!);
     passEncoder.setVertexBuffer(0, this.vertexBuffer);
-    passEncoder.draw(36, 1, 0, 0); // 36 vertices per cube (6 faces * 2 triangles * 3 vertices)
+    const totalVertices = this.vertexBuffer.size / (7 * 4); // 7 floats per vertex (3 for position, 4 for color), 4 bytes per float
+    passEncoder.draw(totalVertices, 1, 0, 0);
     passEncoder.end();
 
     this.device.queue.submit([commandEncoder.finish()]);

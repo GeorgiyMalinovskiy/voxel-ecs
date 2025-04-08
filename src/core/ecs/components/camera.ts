@@ -11,7 +11,6 @@ export class CameraComponent implements Component {
 
   // Camera state
   public targetPosition: vec3;
-  public targetRotation: vec3;
   public isMouseLocked: boolean = false;
 
   constructor(
@@ -24,9 +23,6 @@ export class CameraComponent implements Component {
   ) {
     this.targetPosition = initialPosition
       ? vec3.clone(initialPosition)
-      : vec3.create();
-    this.targetRotation = initialRotation
-      ? vec3.clone(initialRotation)
       : vec3.create();
   }
 }
