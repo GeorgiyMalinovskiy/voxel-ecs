@@ -18,6 +18,7 @@ class CameraSystem implements System {
   private boundMouseMoveHandler: (event: MouseEvent) => void;
   private boundPointerLockChange: () => void;
   private world: World | null = null;
+  private canvas!: HTMLCanvasElement; // Using definite assignment assertion
 
   constructor() {
     this.logger = new Logger("CameraSystem");
@@ -27,12 +28,6 @@ class CameraSystem implements System {
     this.boundKeyupHandler = this.handleKeyUp.bind(this);
     this.boundMouseMoveHandler = this.handleMouseMove.bind(this);
     this.boundPointerLockChange = this.handlePointerLockChange.bind(this);
-
-    // Add event listeners
-    document.addEventListener("keydown", this.boundKeydownHandler);
-    document.addEventListener("keyup", this.boundKeyupHandler);
-    document.addEventListener("mousemove", this.boundMouseMoveHandler);
-    document.addEventListener("pointerlockchange", this.boundPointerLockChange);
 
     // Initialize key states for WASD and arrow keys
     [
@@ -47,6 +42,16 @@ class CameraSystem implements System {
     ].forEach((key) => {
       this.keyStates.set(key, false);
     });
+  }
+
+  initialize(canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+
+    // Add event listeners
+    window.addEventListener("keydown", this.boundKeydownHandler);
+    window.addEventListener("keyup", this.boundKeyupHandler);
+    this.canvas.addEventListener("mousemove", this.boundMouseMoveHandler);
+    document.addEventListener("pointerlockchange", this.boundPointerLockChange);
   }
 
   private handleKeyDown(event: KeyboardEvent): void {
@@ -73,7 +78,7 @@ class CameraSystem implements System {
 
       // Handle mouse movement for camera rotation
       if (camera.isMouseLocked) {
-        const rotX = -event.movementY * camera.mouseSensitivity;
+        const rotX = event.movementY * camera.mouseSensitivity;
         const rotY = -event.movementX * camera.mouseSensitivity;
 
         // Update rotation with clamping for X (vertical) rotation
@@ -91,15 +96,15 @@ class CameraSystem implements System {
       this.world?.getEntitiesWith(TransformComponent, CameraComponent) ?? [];
     for (const entity of entities) {
       const camera = this.world!.getComponent(entity, CameraComponent)!;
-      camera.isMouseLocked = document.pointerLockElement !== null;
+      camera.isMouseLocked = document.pointerLockElement === this.canvas;
     }
   }
 
   private toggleMouseLock(): void {
-    if (document.pointerLockElement) {
+    if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock();
     } else {
-      document.body.requestPointerLock();
+      this.canvas.requestPointerLock();
     }
   }
 
@@ -115,14 +120,14 @@ class CameraSystem implements System {
       // Calculate movement direction based on camera rotation
       const moveDir = vec3.create();
       const forward = vec3.fromValues(
-        -Math.sin(transform.rotation[1]), // Negated for correct direction
+        Math.sin(transform.rotation[1]), // Removed negation
         0, // Keep Y movement at 0 for now
-        -Math.cos(transform.rotation[1]) // Negated for correct direction
+        Math.cos(transform.rotation[1]) // Removed negation
       );
       const right = vec3.fromValues(
-        -Math.cos(transform.rotation[1]), // Negated for correct direction
+        Math.cos(transform.rotation[1]), // Removed negation
         0,
-        Math.sin(transform.rotation[1])
+        -Math.sin(transform.rotation[1]) // Added negation for correct right vector
       );
 
       // Apply movement based on key states
@@ -133,10 +138,10 @@ class CameraSystem implements System {
         vec3.scaleAndAdd(moveDir, moveDir, forward, -1);
       }
       if (this.keyStates.get("d") || this.keyStates.get("arrowright")) {
-        vec3.scaleAndAdd(moveDir, moveDir, right, 1);
+        vec3.scaleAndAdd(moveDir, moveDir, right, -1);
       }
       if (this.keyStates.get("a") || this.keyStates.get("arrowleft")) {
-        vec3.scaleAndAdd(moveDir, moveDir, right, -1);
+        vec3.scaleAndAdd(moveDir, moveDir, right, 1);
       }
 
       // Normalize and scale movement
@@ -166,9 +171,9 @@ class CameraSystem implements System {
 
   dispose(): void {
     // Remove event listeners
-    document.removeEventListener("keydown", this.boundKeydownHandler);
-    document.removeEventListener("keyup", this.boundKeyupHandler);
-    document.removeEventListener("mousemove", this.boundMouseMoveHandler);
+    window.removeEventListener("keydown", this.boundKeydownHandler);
+    window.removeEventListener("keyup", this.boundKeyupHandler);
+    this.canvas.removeEventListener("mousemove", this.boundMouseMoveHandler);
     document.removeEventListener(
       "pointerlockchange",
       this.boundPointerLockChange
@@ -188,6 +193,7 @@ export class SampleScene {
   private isDisposed: boolean = false;
   private animationFrameId: number | null = null;
   private boundKeydownHandler: (event: KeyboardEvent) => void;
+  private cameraSystem: CameraSystem;
 
   constructor(canvas: HTMLCanvasElement) {
     // Set log level to INFO by default, only show debug when needed
@@ -220,7 +226,9 @@ export class SampleScene {
     );
 
     // Add systems
-    this.world.addSystem(new CameraSystem());
+    this.cameraSystem = new CameraSystem();
+    this.cameraSystem.initialize(canvas);
+    this.world.addSystem(this.cameraSystem);
 
     // Create sample voxel data
     this.createSampleVoxels();
