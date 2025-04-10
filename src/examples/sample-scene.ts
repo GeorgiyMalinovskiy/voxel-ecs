@@ -3,6 +3,7 @@ import { System } from "../core/ecs/types";
 import { TransformComponent } from "../core/ecs/components/transform";
 import { CameraComponent } from "../core/ecs/components/camera";
 import { VoxelOctree } from "../core/voxel/octree";
+import { VoxelComponent } from "../core/ecs/components/voxel";
 import { vec3 } from "gl-matrix";
 import { Logger, LogLevel } from "../core/utils/logger";
 import { CameraSystem } from "../core/ecs/systems/camera";
@@ -50,12 +51,19 @@ export class SampleScene {
       )
     );
 
+    // Create voxel entity
+    const voxelEntity = this.world.createEntity();
+    this.world.addComponent(
+      voxelEntity,
+      new VoxelComponent(32, 5) // Same size and depth as the octree
+    );
+
     // Add systems
     this.cameraSystem = new CameraSystem();
     this.cameraSystem.initialize(canvas);
     this.world.addSystem(this.cameraSystem);
 
-    this.renderSystem = new RenderSystem(canvas, this.octree);
+    this.renderSystem = new RenderSystem(canvas);
     this.world.addSystem(this.renderSystem);
 
     // Create sample voxel data
@@ -88,8 +96,20 @@ Continue this process up the hierarchy
 Try running the scene now - you should see a clean terrain without intersecting meshes, and the structure is ready for implementing destruction features later.
   */
   private createSampleVoxels(): void {
+    // Get the voxel component
+    const voxelEntities = this.world.getEntitiesWith(VoxelComponent);
+    if (voxelEntities.length === 0) {
+      this.logger.error("No voxel entity found");
+      return;
+    }
+    const voxelComponent = this.world.getComponent(
+      voxelEntities[0],
+      VoxelComponent
+    )!;
+    const octree = voxelComponent.getOctree();
+
     // Create a simple terrain with different colors
-    const size = this.octree.getSize() / 2;
+    const size = octree.getSize() / 2;
     const buffer = 1; // Leave a buffer zone at the edges
     let voxelCount = 0;
 
@@ -144,7 +164,7 @@ Try running the scene now - you should see a clean terrain without intersecting 
           }
 
           // Set the voxel at the current position
-          this.octree.setVoxel(vec3.fromValues(x, y, z), {
+          octree.setVoxel(vec3.fromValues(x, y, z), {
             material: 1,
             color,
             active: true, // We'll update this after generating all voxels
@@ -162,7 +182,7 @@ Try running the scene now - you should see a clean terrain without intersecting 
             ];
 
             // Set the parent voxel with the same material but slightly different color
-            this.octree.setVoxel(
+            octree.setVoxel(
               vec3.fromValues(
                 Math.floor(x / 2) * 2,
                 Math.floor(y / 2) * 2,
@@ -182,7 +202,7 @@ Try running the scene now - you should see a clean terrain without intersecting 
     this.logger.debug(`Created ${voxelCount} voxels before optimization`);
 
     // Update active states based on exposure
-    this.octree.updateActiveStates();
+    octree.updateActiveStates();
     this.logger.info(
       "Created sample voxel terrain with active state optimization"
     );
@@ -302,10 +322,7 @@ Try running the scene now - you should see a clean terrain without intersecting 
       this.world.destroyEntity(entity);
     }
 
-    // Clear octree
-    this.octree.clear();
-
-    // Cleanup logger
+    // Clear logger
     Logger.cleanup();
     this.logger.info("Scene cleanup completed");
   }

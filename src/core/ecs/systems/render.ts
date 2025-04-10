@@ -2,23 +2,24 @@ import { System } from "../types";
 import { World } from "../world";
 import { TransformComponent } from "../components/transform";
 import { CameraComponent } from "../components/camera";
+import { VoxelComponent } from "../components/voxel";
 import { WebGPURenderer } from "../../renderer/webgpu";
 import { vec3, mat4 } from "gl-matrix";
 import { Logger } from "../../utils/logger";
-import { VoxelOctree } from "../../voxel/octree";
 
 export class RenderSystem implements System {
   private logger: Logger;
   private renderer: WebGPURenderer;
+  private lastLogTime: number = 0;
+  private readonly LOG_INTERVAL: number = 1000; // Log every second
 
-  constructor(canvas: HTMLCanvasElement, private octree: VoxelOctree) {
+  constructor(canvas: HTMLCanvasElement) {
     this.logger = new Logger("RenderSystem");
     this.renderer = new WebGPURenderer(canvas);
   }
 
   async initialize(): Promise<void> {
     await this.renderer.initialize();
-    this.renderer.updateVoxelData(this.octree);
     this.logger.info("Render system initialized");
   }
 
@@ -30,6 +31,7 @@ export class RenderSystem implements System {
     )[0];
 
     if (!cameraEntity) {
+      this.logger.warn("No camera entity found for rendering");
       return;
     }
 
@@ -70,17 +72,37 @@ export class RenderSystem implements System {
       camera.far
     );
 
+    // Get all voxel entities
+    const voxelEntities = world.getEntitiesWith(VoxelComponent);
+
+    // Update vertex data for all voxel entities
+    for (const entity of voxelEntities) {
+      const voxelComponent = world.getComponent(entity, VoxelComponent)!;
+      this.renderer.updateVoxelData(voxelComponent.getOctree());
+    }
+
+    // Log camera and rendering state periodically
+    const currentTime = performance.now();
+    if (currentTime - this.lastLogTime >= this.LOG_INTERVAL) {
+      this.logger.debug(
+        `Camera: pos=${vec3.str(cameraTransform.position)}, rot=${vec3.str(
+          cameraTransform.rotation
+        )}, fov=${camera.fov}, Voxel Entities: ${voxelEntities.length}`
+      );
+      this.lastLogTime = currentTime;
+    }
+
     // Render the scene
     this.renderer.render(viewMatrix, projectionMatrix);
+  }
+
+  getStatus(): string {
+    return this.renderer.getStatus();
   }
 
   dispose(): void {
     if (this.renderer) {
       this.renderer.dispose();
     }
-  }
-
-  getStatus(): string {
-    return this.renderer.getStatus();
   }
 }

@@ -6,7 +6,7 @@ export class WebGPURenderer {
   private device: GPUDevice | null = null;
   private context: GPUCanvasContext | null = null;
   private pipeline: GPURenderPipeline | null = null;
-  private vertexBuffer: GPUBuffer | null = null;
+  private vertexBuffers: Map<VoxelOctree, GPUBuffer> = new Map();
   private uniformBuffer: GPUBuffer | null = null;
   private bindGroup: GPUBindGroup | null = null;
   private logger: Logger;
@@ -14,6 +14,7 @@ export class WebGPURenderer {
   private readonly RENDER_LOG_INTERVAL: number = 1000; // Log every 1 second
   private frameCount: number = 0;
   private lastFrameTime: number = 0;
+  private depthTexture: GPUTexture | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.logger = new Logger("WebGPURenderer");
@@ -29,7 +30,7 @@ export class WebGPURenderer {
 
     return (
       `FPS: ${fps}, Canvas: ${this.canvas.width}x${this.canvas.height}, ` +
-      `Buffers: ${this.vertexBuffer ? "Active" : "None"}`
+      `Buffers: ${this.vertexBuffers.size > 0 ? "Active" : "None"}`
     );
   }
 
@@ -58,12 +59,34 @@ export class WebGPURenderer {
         alphaMode: "premultiplied",
       });
 
+      // Create depth texture
+      this.createDepthTexture();
+
       await this.createPipeline(canvasFormat);
       this.logger.info("WebGPU renderer initialized successfully");
     } catch (error) {
       this.logger.error(`Failed to initialize WebGPU: ${error}`);
       throw error;
     }
+  }
+
+  private createDepthTexture(): void {
+    if (!this.device || !this.context) return;
+
+    if (this.depthTexture) {
+      this.depthTexture.destroy();
+    }
+
+    this.depthTexture = this.device.createTexture({
+      size: {
+        width: this.canvas.width,
+        height: this.canvas.height,
+        depthOrArrayLayers: 1,
+      },
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.logger.debug("Created depth texture");
   }
 
   private async createPipeline(canvasFormat: GPUTextureFormat): Promise<void> {
@@ -172,26 +195,42 @@ export class WebGPURenderer {
   }
 
   updateVoxelData(octree: VoxelOctree): void {
-    const vertices: number[] = [];
+    if (!this.device) {
+      this.logger.error("Cannot update voxel data - device not initialized");
+      return;
+    }
 
-    octree.traverse((node: OctreeNode) => {
-      const voxel = node.getVoxel(node.position);
-      if (voxel && voxel.active) {
-        this.generateCubeVertices(node, vertices);
+    // Get or create vertex buffer for this octree
+    let vertexBuffer = this.vertexBuffers.get(octree);
+    const vertices = octree.getVertices();
+
+    if (!vertices.length) {
+      if (vertexBuffer) {
+        vertexBuffer.destroy();
+        this.vertexBuffers.delete(octree);
       }
-    });
+      return;
+    }
 
-    this.vertexBuffer = this.device!.createBuffer({
-      size: vertices.length * 4,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
+    // Each vertex has 7 components (3 for position, 4 for color)
+    const bufferSize = vertices.length * Float32Array.BYTES_PER_ELEMENT;
 
-    new Float32Array(this.vertexBuffer.getMappedRange()).set(vertices);
-    this.vertexBuffer.unmap();
+    if (!vertexBuffer || vertexBuffer.size < bufferSize) {
+      if (vertexBuffer) {
+        vertexBuffer.destroy();
+      }
+      vertexBuffer = this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      this.vertexBuffers.set(octree, vertexBuffer);
+    }
 
-    this.logger.info(
-      `Updated vertex buffer with ${vertices.length / 7} vertices`
+    // Convert vertices to Float32Array before writing to buffer
+    const vertexData = new Float32Array(vertices);
+    this.device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+    this.logger.debug(
+      `Updated vertex buffer for octree with ${vertices.length / 7} vertices`
     );
   }
 
@@ -244,7 +283,7 @@ export class WebGPURenderer {
   }
 
   render(viewMatrix: mat4, projectionMatrix: mat4): void {
-    if (!this.device || !this.context || !this.pipeline || !this.vertexBuffer) {
+    if (!this.device || !this.context || !this.pipeline) {
       return;
     }
 
@@ -254,20 +293,19 @@ export class WebGPURenderer {
       this.lastFrameTime = performance.now();
     }
 
+    // Multiply view and projection matrices
+    const viewProjectionMatrix = mat4.create();
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+    // Convert matrix to Float32Array and update uniform buffer
+    const matrixArray = new Float32Array(viewProjectionMatrix);
+    this.device.queue.writeBuffer(this.uniformBuffer!, 0, matrixArray);
+
+    // Begin render pass
     const commandEncoder = this.device.createCommandEncoder();
     const textureView = this.context.getCurrentTexture().createView();
 
-    const depthTexture = this.device.createTexture({
-      size: {
-        width: this.canvas.width,
-        height: this.canvas.height,
-        depthOrArrayLayers: 1,
-      },
-      format: "depth24plus",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-
-    const renderPassDescriptor: GPURenderPassDescriptor = {
+    const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [
         {
           view: textureView,
@@ -277,51 +315,52 @@ export class WebGPURenderer {
         },
       ],
       depthStencilAttachment: {
-        view: depthTexture.createView(),
+        view: this.depthTexture!.createView(),
         depthClearValue: 1.0,
         depthLoadOp: "clear",
         depthStoreOp: "store",
       },
-    };
+    });
 
-    // Update uniform buffer with new view-projection matrix
-    const viewProjectionMatrix = mat4.create();
-    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
-    this.device.queue.writeBuffer(
-      this.uniformBuffer!,
-      0,
-      viewProjectionMatrix as Float32Array
-    );
+    renderPass.setPipeline(this.pipeline);
+    renderPass.setBindGroup(0, this.bindGroup!);
 
-    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-    passEncoder.setPipeline(this.pipeline);
-    passEncoder.setBindGroup(0, this.bindGroup!);
-    passEncoder.setVertexBuffer(0, this.vertexBuffer);
-    const totalVertices = this.vertexBuffer.size / (7 * 4); // 7 floats per vertex (3 for position, 4 for color), 4 bytes per float
-    passEncoder.draw(totalVertices, 1, 0, 0);
-    passEncoder.end();
+    // Render each octree
+    for (const [octree, vertexBuffer] of this.vertexBuffers) {
+      const vertices = octree.getVertices();
+      if (vertices.length > 0) {
+        renderPass.setVertexBuffer(0, vertexBuffer);
+        renderPass.draw(vertices.length / 7, 1, 0, 0); // 7 components per vertex
+      }
+    }
 
+    renderPass.end();
     this.device.queue.submit([commandEncoder.finish()]);
-    depthTexture.destroy();
 
     // Only log render frame every RENDER_LOG_INTERVAL milliseconds
     const currentTime = performance.now();
     if (currentTime - this.lastRenderLogTime >= this.RENDER_LOG_INTERVAL) {
-      this.logger.debug("Frame statistics: WebGPU render completed");
+      this.logger.debug(
+        `Frame statistics: WebGPU render completed with ${this.vertexBuffers.size} octrees`
+      );
       this.lastRenderLogTime = currentTime;
     }
   }
 
   dispose(): void {
-    if (this.vertexBuffer) {
-      this.vertexBuffer.destroy();
-      this.vertexBuffer = null;
+    // Clean up vertex buffers
+    for (const buffer of this.vertexBuffers.values()) {
+      buffer.destroy();
     }
+    this.vertexBuffers.clear();
+
+    // Clean up other resources
     if (this.uniformBuffer) {
       this.uniformBuffer.destroy();
-      this.uniformBuffer = null;
     }
-    // Clear other WebGPU resources
+    if (this.depthTexture) {
+      this.depthTexture.destroy();
+    }
     this.pipeline = null;
     this.bindGroup = null;
     this.context = null;
