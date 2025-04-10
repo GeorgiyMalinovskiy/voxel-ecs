@@ -175,7 +175,8 @@ export class WebGPURenderer {
     const vertices: number[] = [];
 
     octree.traverse((node: OctreeNode) => {
-      if (node.getVoxel(node.position)) {
+      const voxel = node.getVoxel(node.position);
+      if (voxel && voxel.active) {
         this.generateCubeVertices(node, vertices);
       }
     });

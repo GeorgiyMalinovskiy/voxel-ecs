@@ -82,29 +82,62 @@ export class SampleScene {
 
   private createSampleVoxels(): void {
     // Create a simple terrain with different colors
-    for (let x = -16; x < 16; x++) {
-      for (let z = -16; z < 16; z++) {
+    const size = this.octree.getSize() / 2;
+    for (let x = -size; x < size; x++) {
+      for (let z = -size; z < size; z++) {
+        // Create more interesting terrain with multiple sine waves
         const height = Math.floor(
-          Math.sin(x * 0.3) * 4 + Math.cos(z * 0.3) * 4 + 4 // Increased amplitude and added offset
+          Math.sin(x * 0.2) * 3 +
+            Math.cos(z * 0.2) * 3 +
+            Math.sin((x + z) * 0.3) * 2 +
+            8 // Base height offset
         );
 
-        for (let y = -2; y <= height; y++) {
-          const color: [number, number, number, number] = [
-            0.2 + Math.random() * 0.2,
-            0.5 + Math.random() * 0.2,
-            0.2 + Math.random() * 0.2,
-            1.0,
-          ];
+        // Create terrain from bottom to top
+        for (let y = -size; y <= height; y++) {
+          // Calculate color based on height
+          let color: [number, number, number, number];
+
+          if (y === height) {
+            // Top layer - grass
+            color = [
+              0.2 + Math.random() * 0.1, // More green
+              0.5 + Math.random() * 0.2,
+              0.2 + Math.random() * 0.1,
+              1.0,
+            ];
+          } else if (y > height - 3) {
+            // Dirt layer
+            color = [
+              0.4 + Math.random() * 0.1,
+              0.3 + Math.random() * 0.1,
+              0.2 + Math.random() * 0.1,
+              1.0,
+            ];
+          } else {
+            // Stone layer
+            color = [
+              0.3 + Math.random() * 0.1,
+              0.3 + Math.random() * 0.1,
+              0.3 + Math.random() * 0.1,
+              1.0,
+            ];
+          }
 
           this.octree.setVoxel(vec3.fromValues(x, y, z), {
             material: 1,
             color,
+            active: true, // We'll update this after generating all voxels
           });
         }
       }
     }
 
-    this.logger.info("Created sample voxel terrain");
+    // Update active states based on exposure
+    this.octree.updateActiveStates();
+    this.logger.info(
+      "Created sample voxel terrain with active state optimization"
+    );
   }
 
   private downloadLogs(): void {

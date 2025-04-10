@@ -4,6 +4,7 @@ import { vec3 } from "gl-matrix";
 export interface Voxel {
   material: number;
   color: [number, number, number, number];
+  active: boolean; // Whether this voxel should be considered for rendering/physics
 }
 
 export class OctreeNode {
@@ -41,6 +42,32 @@ export class OctreeNode {
     return null;
   }
 
+  // Check if a voxel has any exposed faces (adjacent to empty space)
+  hasExposedFaces(position: vec3): boolean {
+    const offsets = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
+
+    for (const [dx, dy, dz] of offsets) {
+      const neighborPos = vec3.fromValues(
+        position[0] + dx,
+        position[1] + dy,
+        position[2] + dz
+      );
+      const neighbor = this.getVoxel(neighborPos);
+      if (!neighbor) {
+        return true; // Found an empty neighbor, so this voxel has an exposed face
+      }
+    }
+
+    return false; // No exposed faces found
+  }
+
   setVoxel(position: vec3, voxel: Voxel | null): void {
     // Check if position is within this node's bounds
     if (!this.containsPoint(position)) {
@@ -68,6 +95,14 @@ export class OctreeNode {
     }
   }
 
+  // Update the active state of a voxel
+  updateVoxelActive(position: vec3, active: boolean): void {
+    const voxel = this.getVoxel(position);
+    if (voxel) {
+      voxel.active = active;
+    }
+  }
+
   private subdivide(): void {
     this.children = new Array(OctreeNode.CHILD_COUNT).fill(null);
     const halfSize = this.size / 2;
@@ -86,17 +121,6 @@ export class OctreeNode {
       );
     }
     this.logger.debug(`Subdivided node at depth ${this.depth}`);
-  }
-
-  private getChildIndex(position: vec3): number {
-    const halfSize = this.size / 2;
-    let index = 0;
-
-    if (position[0] >= this.position[0] + halfSize) index |= 1;
-    if (position[1] >= this.position[1] + halfSize) index |= 2;
-    if (position[2] >= this.position[2] + halfSize) index |= 4;
-
-    return index;
   }
 
   private getChildIndexForPosition(position: vec3): number {
@@ -139,7 +163,12 @@ export class VoxelOctree {
   private logger: Logger;
 
   constructor(size: number, maxDepth: number) {
-    this.root = new OctreeNode(vec3.fromValues(0, 0, 0), size, 0, maxDepth);
+    this.root = new OctreeNode(
+      vec3.fromValues(-size / 2, -size / 2, -size / 2),
+      size,
+      0,
+      maxDepth
+    );
     this.logger = new Logger("VoxelOctree");
     this.logger.info(
       `Created VoxelOctree with size ${size} and max depth ${maxDepth}`
@@ -163,6 +192,17 @@ export class VoxelOctree {
     return this.root.getVoxel(position);
   }
 
+  // Update visibility of all voxels based on exposure
+  updateActiveStates(): void {
+    this.traverse((node: OctreeNode) => {
+      const voxel = node.getVoxel(node.position);
+      if (voxel) {
+        voxel.active = node.hasExposedFaces(node.position);
+      }
+    });
+    this.logger.info("Updated voxel active states");
+  }
+
   traverse(callback: (node: OctreeNode) => void): void {
     this.root.traverse(callback);
   }
@@ -171,7 +211,12 @@ export class VoxelOctree {
     // Create a new root node with the same parameters
     const size = this.root.size;
     const maxDepth = this.root.maxDepth;
-    this.root = new OctreeNode(vec3.fromValues(0, 0, 0), size, 0, maxDepth);
+    this.root = new OctreeNode(
+      vec3.fromValues(-size / 2, -size / 2, -size / 2),
+      size,
+      0,
+      maxDepth
+    );
     this.logger.info("Octree cleared");
   }
 }
