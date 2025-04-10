@@ -147,7 +147,17 @@ export class OctreeNode {
   }
 
   traverse(callback: (node: OctreeNode) => void): void {
-    callback(this);
+    // Only process this node if:
+    // 1. It's a leaf node (at max depth) OR
+    // 2. It has a voxel but no children (partially filled space)
+    if (
+      this.depth === this.maxDepth ||
+      (this.voxel !== null && !this.children)
+    ) {
+      callback(this);
+    }
+
+    // Continue traversing children if they exist
     if (this.children) {
       for (const child of this.children) {
         if (child) {
@@ -194,13 +204,31 @@ export class VoxelOctree {
 
   // Update visibility of all voxels based on exposure
   updateActiveStates(): void {
+    let activeCount = 0;
+    let totalCount = 0;
+
     this.traverse((node: OctreeNode) => {
+      totalCount++;
       const voxel = node.getVoxel(node.position);
       if (voxel) {
+        const wasActive = voxel.active;
         voxel.active = node.hasExposedFaces(node.position);
+        if (voxel.active) {
+          activeCount++;
+        }
+        if (wasActive !== voxel.active) {
+          this.logger.debug(
+            `Voxel at ${vec3.str(
+              node.position
+            )} active state changed from ${wasActive} to ${voxel.active}`
+          );
+        }
       }
     });
-    this.logger.info("Updated voxel active states");
+
+    this.logger.info(
+      `Updated voxel active states: ${activeCount} active out of ${totalCount} total voxels`
+    );
   }
 
   traverse(callback: (node: OctreeNode) => void): void {

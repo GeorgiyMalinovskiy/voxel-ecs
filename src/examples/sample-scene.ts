@@ -80,11 +80,26 @@ export class SampleScene {
     window.addEventListener("beforeunload", this.cleanup);
   }
 
+  /* TODO:
+  When you want to implement destruction later, you can:
+Destroy the leaf nodes
+Activate the parent node voxels to reveal the coarser structure inside
+Continue this process up the hierarchy
+Try running the scene now - you should see a clean terrain without intersecting meshes, and the structure is ready for implementing destruction features later.
+  */
   private createSampleVoxels(): void {
     // Create a simple terrain with different colors
     const size = this.octree.getSize() / 2;
-    for (let x = -size; x < size; x++) {
-      for (let z = -size; z < size; z++) {
+    const buffer = 1; // Leave a buffer zone at the edges
+    let voxelCount = 0;
+
+    this.logger.debug(
+      `Creating voxels with size ${size * 2} and buffer ${buffer}`
+    );
+
+    // Adjust terrain generation to stay within bounds
+    for (let x = -size + buffer; x < size - buffer; x++) {
+      for (let z = -size + buffer; z < size - buffer; z++) {
         // Create more interesting terrain with multiple sine waves
         const height = Math.floor(
           Math.sin(x * 0.2) * 3 +
@@ -93,8 +108,12 @@ export class SampleScene {
             8 // Base height offset
         );
 
-        // Create terrain from bottom to top
-        for (let y = -size; y <= height; y++) {
+        // Create terrain from bottom to top, but not all the way to the edges
+        for (
+          let y = -size + buffer;
+          y <= Math.min(height, size - buffer);
+          y++
+        ) {
           // Calculate color based on height
           let color: [number, number, number, number];
 
@@ -124,14 +143,43 @@ export class SampleScene {
             ];
           }
 
+          // Set the voxel at the current position
           this.octree.setVoxel(vec3.fromValues(x, y, z), {
             material: 1,
             color,
             active: true, // We'll update this after generating all voxels
           });
+          voxelCount++;
+
+          // If we're at a leaf node, also set the parent node's voxel
+          // This allows for hierarchical destruction later
+          if (y % 2 === 0 && x % 2 === 0 && z % 2 === 0) {
+            const avgColor: [number, number, number, number] = [
+              color[0],
+              color[1],
+              color[2],
+              color[3],
+            ];
+
+            // Set the parent voxel with the same material but slightly different color
+            this.octree.setVoxel(
+              vec3.fromValues(
+                Math.floor(x / 2) * 2,
+                Math.floor(y / 2) * 2,
+                Math.floor(z / 2) * 2
+              ),
+              {
+                material: 1,
+                color: avgColor,
+                active: false, // Parent nodes start inactive
+              }
+            );
+          }
         }
       }
     }
+
+    this.logger.debug(`Created ${voxelCount} voxels before optimization`);
 
     // Update active states based on exposure
     this.octree.updateActiveStates();
