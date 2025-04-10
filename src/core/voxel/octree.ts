@@ -206,25 +206,59 @@ export class VoxelOctree {
   updateActiveStates(): void {
     let activeCount = 0;
     let totalCount = 0;
+    const neighborCache = new Map<string, boolean>();
 
+    // Helper to check and cache neighbor existence
+    const hasNeighbor = (x: number, y: number, z: number): boolean => {
+      const key = `${x},${y},${z}`;
+      if (!neighborCache.has(key)) {
+        neighborCache.set(
+          key,
+          this.getVoxel(vec3.fromValues(x, y, z)) !== null
+        );
+      }
+      return neighborCache.get(key)!;
+    };
+
+    // First pass: collect all nodes and their positions
+    const nodes: OctreeNode[] = [];
     this.traverse((node: OctreeNode) => {
-      totalCount++;
       const voxel = node.getVoxel(node.position);
       if (voxel) {
-        const wasActive = voxel.active;
-        voxel.active = node.hasExposedFaces(node.position);
-        if (voxel.active) {
-          activeCount++;
-        }
-        if (wasActive !== voxel.active) {
-          this.logger.debug(
-            `Voxel at ${vec3.str(
-              node.position
-            )} active state changed from ${wasActive} to ${voxel.active}`
-          );
-        }
+        nodes.push(node);
+        totalCount++;
       }
     });
+
+    // Second pass: update active states using cached neighbor checks
+    for (const node of nodes) {
+      const voxel = node.getVoxel(node.position)!;
+      const [x, y, z] = node.position;
+      const wasActive = voxel.active;
+
+      // Quick check for common cases
+      const hasAllNeighbors =
+        hasNeighbor(x + 1, y, z) &&
+        hasNeighbor(x - 1, y, z) &&
+        hasNeighbor(x, y + 1, z) &&
+        hasNeighbor(x, y - 1, z) &&
+        hasNeighbor(x, y, z + 1) &&
+        hasNeighbor(x, y, z - 1);
+
+      voxel.active = !hasAllNeighbors;
+
+      if (voxel.active) {
+        activeCount++;
+      }
+
+      if (wasActive !== voxel.active) {
+        this.logger.debug(
+          `Voxel at ${vec3.str(
+            node.position
+          )} active state changed from ${wasActive} to ${voxel.active}`
+        );
+      }
+    }
 
     this.logger.info(
       `Updated voxel active states: ${activeCount} active out of ${totalCount} total voxels`
@@ -250,102 +284,123 @@ export class VoxelOctree {
 
   getVertices(): Float32Array {
     const vertices: number[] = [];
+    const neighborCache = new Map<string, boolean>();
 
+    // Helper to check and cache neighbor existence
+    const hasNeighbor = (x: number, y: number, z: number): boolean => {
+      const key = `${x},${y},${z}`;
+      if (!neighborCache.has(key)) {
+        neighborCache.set(
+          key,
+          this.getVoxel(vec3.fromValues(x, y, z)) !== null
+        );
+      }
+      return neighborCache.get(key)!;
+    };
+
+    // Collect all active nodes first to avoid repeated traversals
+    const activeNodes: OctreeNode[] = [];
     this.traverse((node: OctreeNode) => {
       const voxel = node.getVoxel(node.position);
       if (voxel && voxel.active) {
-        const size = node.size;
-        const [x, y, z] = node.position;
-
-        // Check each face's visibility
-        const faces = [
-          {
-            // Front face (-Z)
-            visible: !this.getVoxel(vec3.fromValues(x, y, z - 1)),
-            vertices: [
-              [x, y, z],
-              [x + size, y, z],
-              [x + size, y + size, z],
-              [x, y + size, z],
-            ],
-          },
-          {
-            // Back face (+Z)
-            visible: !this.getVoxel(vec3.fromValues(x, y, z + size)),
-            vertices: [
-              [x + size, y, z + size],
-              [x, y, z + size],
-              [x, y + size, z + size],
-              [x + size, y + size, z + size],
-            ],
-          },
-          {
-            // Top face (+Y)
-            visible: !this.getVoxel(vec3.fromValues(x, y + size, z)),
-            vertices: [
-              [x, y + size, z],
-              [x + size, y + size, z],
-              [x + size, y + size, z + size],
-              [x, y + size, z + size],
-            ],
-          },
-          {
-            // Bottom face (-Y)
-            visible: !this.getVoxel(vec3.fromValues(x, y - 1, z)),
-            vertices: [
-              [x, y, z + size],
-              [x + size, y, z + size],
-              [x + size, y, z],
-              [x, y, z],
-            ],
-          },
-          {
-            // Right face (+X)
-            visible: !this.getVoxel(vec3.fromValues(x + size, y, z)),
-            vertices: [
-              [x + size, y, z],
-              [x + size, y, z + size],
-              [x + size, y + size, z + size],
-              [x + size, y + size, z],
-            ],
-          },
-          {
-            // Left face (-X)
-            visible: !this.getVoxel(vec3.fromValues(x - 1, y, z)),
-            vertices: [
-              [x, y, z + size],
-              [x, y, z],
-              [x, y + size, z],
-              [x, y + size, z + size],
-            ],
-          },
-        ];
-
-        // Add vertices for visible faces only
-        for (const face of faces) {
-          if (face.visible) {
-            // First triangle
-            vertices.push(
-              ...face.vertices[0],
-              ...voxel.color,
-              ...face.vertices[1],
-              ...voxel.color,
-              ...face.vertices[2],
-              ...voxel.color
-            );
-            // Second triangle
-            vertices.push(
-              ...face.vertices[0],
-              ...voxel.color,
-              ...face.vertices[2],
-              ...voxel.color,
-              ...face.vertices[3],
-              ...voxel.color
-            );
-          }
-        }
+        activeNodes.push(node);
       }
     });
+
+    // Process active nodes
+    for (const node of activeNodes) {
+      const voxel = node.getVoxel(node.position)!;
+      const size = node.size;
+      const [x, y, z] = node.position;
+
+      // Check each face's visibility
+      const faces = [
+        {
+          // Front face (-Z)
+          visible: !hasNeighbor(x, y, z - 1),
+          vertices: [
+            [x, y, z],
+            [x + size, y, z],
+            [x + size, y + size, z],
+            [x, y + size, z],
+          ],
+        },
+        {
+          // Back face (+Z)
+          visible: !hasNeighbor(x, y, z + size),
+          vertices: [
+            [x + size, y, z + size],
+            [x, y, z + size],
+            [x, y + size, z + size],
+            [x + size, y + size, z + size],
+          ],
+        },
+        {
+          // Top face (+Y)
+          visible: !hasNeighbor(x, y + size, z),
+          vertices: [
+            [x, y + size, z],
+            [x + size, y + size, z],
+            [x + size, y + size, z + size],
+            [x, y + size, z + size],
+          ],
+        },
+        {
+          // Bottom face (-Y)
+          visible: !hasNeighbor(x, y - 1, z),
+          vertices: [
+            [x, y, z + size],
+            [x + size, y, z + size],
+            [x + size, y, z],
+            [x, y, z],
+          ],
+        },
+        {
+          // Right face (+X)
+          visible: !hasNeighbor(x + size, y, z),
+          vertices: [
+            [x + size, y, z],
+            [x + size, y, z + size],
+            [x + size, y + size, z + size],
+            [x + size, y + size, z],
+          ],
+        },
+        {
+          // Left face (-X)
+          visible: !hasNeighbor(x - 1, y, z),
+          vertices: [
+            [x, y, z + size],
+            [x, y, z],
+            [x, y + size, z],
+            [x, y + size, z + size],
+          ],
+        },
+      ];
+
+      // Add vertices for visible faces only
+      for (const face of faces) {
+        if (face.visible) {
+          // First triangle
+          vertices.push(
+            ...face.vertices[0],
+            ...voxel.color,
+            ...face.vertices[1],
+            ...voxel.color,
+            ...face.vertices[2],
+            ...voxel.color
+          );
+          // Second triangle
+          vertices.push(
+            ...face.vertices[0],
+            ...voxel.color,
+            ...face.vertices[2],
+            ...voxel.color,
+            ...face.vertices[3],
+            ...voxel.color
+          );
+        }
+      }
+    }
 
     return new Float32Array(vertices);
   }
